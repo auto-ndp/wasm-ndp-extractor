@@ -21,9 +21,17 @@ target_include_directories(wndpe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(wndpe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(wndpe PUBLIC cxx_std_17)
 target_link_libraries(wndpe PUBLIC binaryen Threads::Threads)
+target_compile_options(wndpe PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -pedantic>
+)
 
 add_executable(wndpe_driver ${wndpe_driver_sources})
 target_include_directories(wndpe_driver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(wndpe_driver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(wndpe_driver PUBLIC cxx_std_17)
 target_link_libraries(wndpe_driver PUBLIC wndpe::wndpe Threads::Threads)
+target_compile_options(wndpe_driver PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -pedantic>
+)
