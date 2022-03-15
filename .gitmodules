@@ -1,3 +1,4 @@
 [submodule "external/binaryen"]
 	path = external/binaryen
-	url = https://github.com/WebAssembly/binaryen
+	url = https://github.com/kubasz/binaryen
+	branch = wasm-ndp-extractor
