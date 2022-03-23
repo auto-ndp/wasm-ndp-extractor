@@ -1,5 +1,7 @@
 build/
 
+*.dbg.wat
+
 ### C++ ###
 # Prerequisites
 *.d
