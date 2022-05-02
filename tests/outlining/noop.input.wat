@@ -1,6 +1,10 @@
 (module
   (func $noop (result i32)
+    (call $__wndpe_outline_begin)
+    (call $__wndpe_outline_end)
     (i32.const 0)
   )
+  (import "__builtins" "__wndpe_outline_begin" (func $__wndpe_outline_begin))
+  (import "__builtins" "__wndpe_outline_end" (func $__wndpe_outline_end))
   (export "noop" (func $noop))
 )
