@@ -31,9 +31,17 @@ void runOutliningTests() {
                   TEST_INPUT_EXT.size(),
                   TEST_DEBUG_EXT);
     {
-      auto wmod = wndpe::loadModule(dent.path());
-      wndpe::runOutliningPasses(*wmod);
-      wndpe::writeWat(*wmod, opath);
+      try {
+        auto wmod = wndpe::loadModule(dent.path());
+        wndpe::runOutliningPasses(*wmod);
+        wndpe::writeWat(*wmod, opath);
+      } catch (const std::exception& e) {
+        fmt::print(stderr,
+                   "Caught exception when processing {}: {}",
+                   dent.path().string(),
+                   e.what());
+        std::exit(1);
+      }
     }
   }
 }
