@@ -7,6 +7,8 @@
 #include <wasm-builder.h>
 #include <wasm.h>
 
+#include <mutex>
+
 #include <fmt/core.h>
 
 namespace wasm {
@@ -18,6 +20,8 @@ struct BlockInfo {
   bool hasBeginDirectly = false;
   bool hasEndDirectly = false;
 };
+
+static std::mutex OutliningModuleMutex;
 
 struct NdpOutliningPass
   : public WalkerPass<
@@ -32,9 +36,13 @@ struct NdpOutliningPass
 
   Pass* create() override { return new NdpOutliningPass; }
 
+  BlockInfo nextInfo;
+
   BasicBlock* makeBasicBlock() {
     auto* bb = new BasicBlock();
     auto** currp = getCurrentPointer();
+    bb->contents = std::move(nextInfo);
+    nextInfo = BlockInfo{};
     bb->contents.node = currp ? *currp : nullptr;
     return bb;
   }
@@ -66,36 +74,37 @@ struct NdpOutliningPass
 
   void visitCall(Call* curr) {
     fmt::print(stderr, "Visiting call to {}\n", curr->target.c_str());
+    bool putInOwnBlock = false;
     if (curr->target == intrnOutlineBegin) {
-      if (currBasicBlock) {
-        currBasicBlock->contents.hasBeginDirectly = true;
-      }
-      Builder builder(*getModule());
-      replaceCurrent(
-        builder.makeCall(intrnOutlineCall, curr->operands, curr->type));
+      nextInfo.hasBeginDirectly = true;
+      putInOwnBlock = true;
       needsOutlining = true;
     } else if (curr->target == intrnOutlineEnd) {
-      if (currBasicBlock) {
-        currBasicBlock->contents.hasEndDirectly = true;
-      }
-      //
+      nextInfo.hasEndDirectly = true;
+      putInOwnBlock = true;
     } else if (curr->target == intrnOutlineCall) {
       //
     }
+    if (putInOwnBlock) {
+      Builder builder(*getModule());
+      replaceCurrent(builder.makeBlock("outlining_block", curr));
+      doEndBlock(this, getCurrentPointer());
+    }
   }
 
-  void doWalkFunction(Function* func) {
+  void doWalkFunction(Function* oldFunction) {
     // Build the CFG.
-    Parent::doWalkFunction(func);
+    Parent::doWalkFunction(oldFunction);
     if (basicBlocks.empty() || this->entry == nullptr) {
       return;
     }
     if (!needsOutlining) {
       return;
     }
-    fmt::print(stderr, "Will outline {}\n", func->name.c_str());
+    fmt::print(stderr, "Will outline {}\n", oldFunction->name.c_str());
 
     // Mark basic blocks as on/off/both paths
+    BasicBlock *outliningEntryBlock{}, *outliningExitBlock{};
     {
       struct BBWalkEntry {
         BasicBlock* bb;
@@ -108,9 +117,6 @@ struct NdpOutliningPass
         BBWalkEntry e = remaining.back();
         remaining.pop_back();
         BlockInfo& info = e.bb->contents;
-        if (info.node != nullptr) {
-          fmt::print(stderr, "Visiting BB {}\n", getExpressionName(info.node));
-        }
         if (info.hasBeginDirectly && info.hasEndDirectly) {
           throw std::runtime_error(
             "Same basic block has both begin and end outlining markers, check "
@@ -134,9 +140,33 @@ struct NdpOutliningPass
               out, info.hasBeginDirectly && !info.hasEndDirectly);
           }
         }
+        if (info.node != nullptr) {
+          std::string bname = getExpressionName(info.node);
+          if (Block* b = info.node->dynCast<Block>(); b && !b->name.isNull()) {
+            bname = b->name.c_str();
+          }
+          fmt::print(stderr,
+                     "Visiting BB {} begin:{} end:{}\n",
+                     bname,
+                     info.hasBeginDirectly,
+                     info.hasEndDirectly);
+        }
+        if (info.hasBeginDirectly && !e.onOutlinedPath) {
+          if (outliningEntryBlock != nullptr) {
+            throw std::runtime_error("Found multiple outlining entry markers");
+          }
+          outliningEntryBlock = e.bb;
+        }
+        if (info.hasEndDirectly && e.onOutlinedPath) {
+          if (outliningExitBlock != nullptr) {
+            throw std::runtime_error("Found multiple outlining exit markers");
+          }
+          outliningExitBlock = e.bb;
+        }
       }
     }
 
+    // give debug names
     for (auto& bb : basicBlocks) {
       if (!bb) {
         continue;
@@ -165,12 +195,37 @@ struct NdpOutliningPass
         b->name.set(new_name.c_str(), false);
       }
     }
+
+    // duplicate function
+    // arguments: comm block ptr, size
+    // returns: i32: did it do an early return
+    Builder builder(*getModule());
+    bool is64bit = getModule()->features.hasMemory64();
+    auto ptrType = is64bit ? wasm::Type::i64 : wasm::Type::i32;
+    Name newFnName = fmt::format("{}$outlined", oldFunction->name.c_str());
+    {
+      std::vector<NameType> args;
+      args.emplace_back("comm_block_ptr", ptrType);
+      args.emplace_back("comm_block_size", ptrType);
+      std::unique_ptr<Function> newFunction =
+        builder.makeFunction(newFnName,
+                             Signature(Type{ptrType, ptrType}, Type::i32),
+                             {},
+                             builder.makeBlock());
+      //
+      {
+        std::lock_guard _l(OutliningModuleMutex);
+        getModule()->addFunction(std::move(newFunction));
+      }
+    }
   }
 
 private:
   Name intrnOutlineBegin = "__wndpe_outline_begin";
   Name intrnOutlineEnd = "__wndpe_outline_end";
   Name intrnOutlineCall = "__wndpe_outline_call";
+  Name intrnOutlineAlloc = "__wndpe_outline_alloc";
+  Name intrnOutlineFree = "__wndpe_outline_free";
 };
 
 Pass* createNdpOutliningPass() { return new NdpOutliningPass(); }
