@@ -194,6 +194,17 @@ struct NdpOutliningPass
           fmt::format("{}_onoutlinedpath", b->name.c_str());
         b->name.set(new_name.c_str(), false);
       }
+      std::string bname = getExpressionName(info.node);
+      if (Block* b = info.node->dynCast<Block>(); b && !b->name.isNull()) {
+        bname = b->name.c_str();
+      }
+      fmt::print(stderr,
+                 "BB-info {} begin:{} end:{} onMain:{} onOutline:{}\n",
+                 bname,
+                 info.hasBeginDirectly,
+                 info.hasEndDirectly,
+                 info.onMainPath,
+                 info.onOutlinedPath);
     }
 
     // duplicate function
@@ -209,10 +220,38 @@ struct NdpOutliningPass
       args.emplace_back("comm_block_size", ptrType);
       std::unique_ptr<Function> newFunction =
         builder.makeFunction(newFnName,
+                             std::move(args),
                              Signature(Type{ptrType, ptrType}, Type::i32),
                              {},
                              builder.makeBlock());
       //
+      newFunction->body = ExpressionManipulator::flexibleCopy(
+        oldFunction->body, *getModule(), [&](Expression* e) -> Expression* {
+          switch (e->_id) {
+            case Expression::CallId: {
+              Call* call = e->cast<Call>();
+              if (call->target == intrnOutlineBegin) {
+                return builder.makeBlock(intrnOutlineJumpInsideLabel,
+                                         builder.makeNop());
+              } else if (call->target == intrnOutlineEnd) {
+                return builder.makeReturn(builder.makeConst<int32_t>(0));
+              }
+              break;
+            }
+            case Expression::ReturnId: {
+              Return* ret = e->cast<Return>();
+              return builder.makeBlock(
+                {builder.makeDrop(ret->value),
+                 builder.makeReturn(builder.makeConst<int32_t>(1))});
+            }
+            default:
+              break;
+          }
+          return nullptr;
+        });
+      newFunction->body = builder.makeBlock(
+        {builder.makeDrop(newFunction->body), builder.makeConst<int32_t>(1)},
+        wasm::Type::i32);
       {
         std::lock_guard _l(OutliningModuleMutex);
         getModule()->addFunction(std::move(newFunction));
@@ -221,6 +260,7 @@ struct NdpOutliningPass
   }
 
 private:
+  Name intrnOutlineJumpInsideLabel = "__wndpe_outlined_start_target";
   Name intrnOutlineBegin = "__wndpe_outline_begin";
   Name intrnOutlineEnd = "__wndpe_outline_end";
   Name intrnOutlineCall = "__wndpe_outline_call";
