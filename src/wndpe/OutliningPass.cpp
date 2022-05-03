@@ -249,9 +249,11 @@ struct NdpOutliningPass
           }
           return nullptr;
         });
-      newFunction->body = builder.makeBlock(
-        {builder.makeDrop(newFunction->body), builder.makeConst<int32_t>(1)},
-        wasm::Type::i32);
+      newFunction->body =
+        builder.makeBlock({builder.makeBreak(intrnOutlineJumpInsideLabel),
+                           builder.makeDrop(newFunction->body),
+                           builder.makeConst<int32_t>(1)},
+                          wasm::Type::i32);
       {
         std::lock_guard _l(OutliningModuleMutex);
         getModule()->addFunction(std::move(newFunction));
